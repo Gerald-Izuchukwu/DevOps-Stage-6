@@ -1,0 +1,105 @@
+---
+- name: Ensure application directory exists
+  file:
+    path: "{{ app_dir }}"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+
+- name: Check if repository exists
+  stat:
+    path: "{{ app_dir }}/.git"
+  register: git_repo
+
+- name: Clone application repository
+  git:
+    repo: "{{ app_repo }}"
+    dest: "{{ app_dir }}"
+    version: "{{ app_branch }}"
+    force: yes
+  become_user: ubuntu
+  when: not git_repo.stat.exists
+
+- name: Pull latest changes from repository
+  git:
+    repo: "{{ app_repo }}"
+    dest: "{{ app_dir }}"
+    version: "{{ app_branch }}"
+    force: yes
+  become_user: ubuntu
+  register: git_pull
+  when: git_repo.stat.exists
+
+- name: Create .env file from template
+  template:
+    src: env.j2
+    dest: "{{ app_dir }}/.env"
+    owner: ubuntu
+    group: ubuntu
+    mode: '0644'
+  register: env_file
+
+- name: Create Traefik certificates directory
+  file:
+    path: "{{ app_dir }}/traefik-certs"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+
+- name: Stop existing containers
+  command: docker compose down
+  args:
+    chdir: "{{ app_dir }}"
+  become_user: ubuntu
+  ignore_errors: true
+  when: git_pull.changed or env_file.changed
+
+- name: Build Docker images
+  command: docker compose build
+  args:
+    chdir: "{{ app_dir }}"
+  become_user: ubuntu
+  when: git_pull.changed or env_file.changed
+  register: docker_build
+
+- name: Start Docker containers
+  command: docker compose up -d
+  args:
+    chdir: "{{ app_dir }}"
+  become_user: ubuntu
+  register: docker_up
+
+- name: Wait for services to be healthy
+  wait_for:
+    port: "{{ item }}"
+    delay: 5
+    timeout: 120
+  loop:
+  - 80
+  - 443
+
+- name: Check running containers
+  command: docker compose ps
+  args:
+    chdir: "{{ app_dir }}"
+  become_user: ubuntu
+  register: container_status
+  changed_when: false
+
+- name: Display container status
+  debug:
+    msg: "{{ container_status.stdout_lines }}"
+
+- name: Get Docker container logs (last 20 lines)
+  command: docker compose logs --tail=20
+  args:
+    chdir: "{{ app_dir }}"
+  become_user: ubuntu
+  register: container_logs
+  changed_when: false
+
+- name: Display recent logs
+  debug:
+    msg: "{{ container_logs.stdout_lines }}"

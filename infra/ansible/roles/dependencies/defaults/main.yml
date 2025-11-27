@@ -1,0 +1,15 @@
+---
+# Docker version
+docker_version: "latest"
+
+# Required packages
+required_packages:
+- apt-transport-https
+- ca-certificates
+- curl
+- gnupg
+- lsb-release
+- git
+- python3-pip
+- python3-setuptools
+- software-properties-common

@@ -1,0 +1,15 @@
+---
+# Application configuration
+app_dir: /opt/todo-app
+app_repo: "{{ lookup('env', 'GITHUB_REPO') }}"
+app_branch: main
+
+# Domain and SSL
+domain: "{{ lookup('env', 'DOMAIN') | default('localhost', true) }}"
+acme_email: "{{ lookup('env', 'ACME_EMAIL') | default('admin@example.com', true) }}"
+
+# Application secrets
+jwt_secret: "{{ lookup('env', 'JWT_SECRET') | default('myfancysecret', true) }}"
+
+# Compose file
+compose_file: docker-compose.yml

@@ -1,0 +1,35 @@
+---
+- name: Deploy TODO Application
+  hosts: todo_servers
+  become: true
+  gather_facts: true
+
+  vars:
+    app_dir: /opt/todo-app
+    compose_file: docker-compose.yml
+    domain: "{{ lookup('env', 'DOMAIN') | default('localhost', true) }}"
+    acme_email: "{{ lookup('env', 'ACME_EMAIL') | default('admin@example.com', true) }}"
+    jwt_secret: "{{ lookup('env', 'JWT_SECRET') | default('myfancysecret', true) }}"
+
+  pre_tasks:
+  - name: Update apt cache
+    apt:
+      update_cache: yes
+      cache_valid_time: 3600
+
+  - name: Wait for system to be ready
+    wait_for_connection:
+      timeout: 300
+
+  roles:
+  - dependencies
+  - deploy
+
+  post_tasks:
+  - name: Display deployment information
+    debug:
+      msg:
+      - "✅ Deployment completed successfully!"
+      - "Server IP: {{ ansible_default_ipv4.address }}"
+      - "Application URL: https://{{ domain }}"
+      - "SSH: ssh -i ~/.ssh/id_rsa ubuntu@{{ ansible_default_ipv4.address }}"
