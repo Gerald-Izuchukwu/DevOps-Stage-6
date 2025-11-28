@@ -19,13 +19,13 @@ variable "key_name" {
 variable "public_key_path" {
   description = "Path to SSH public key"
   type        = string
-  default     = "~/.ssh/id_rsa.pub"
+  default = "~/.ssh/devops_stage6.pub" 
 }
 
 variable "private_key_path" {
   description = "Path to SSH private key"
   type        = string
-  default     = "~/.ssh/id_rsa"
+  default     = "~/.ssh/devops_stage6"
 }
 
 variable "domain" {
@@ -41,4 +41,11 @@ variable "acme_email" {
 variable "github_repo" {
   description = "GitHub repository URL"
   type        = string
+}
+
+variable "ssh_public_key" {
+  description = "SSH public key content (for CI/CD)"
+  type        = string
+  default     = ""
+  sensitive   = true
 }

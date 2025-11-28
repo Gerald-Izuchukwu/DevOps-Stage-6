@@ -69,7 +69,7 @@ resource "aws_security_group" "todo_app" {
 # SSH Key
 resource "aws_key_pair" "deployer" {
   key_name   = var.key_name
-  public_key = file(var.public_key_path)
+  public_key = var.ssh_public_key != "" ? var.ssh_public_key : file(var.public_key_path)
 }
 
 # EC2 Instance

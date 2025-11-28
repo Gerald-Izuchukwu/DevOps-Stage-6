@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       has_changes: ${{ steps.check_changes.outputs.has_changes }}
-      plan_output: ${{ steps.plan.outputs.stdout }}
+      plan_exitcode: ${{ steps.plan.outputs.exitcode }}
 
     steps:
     - name: Checkout Code
@@ -37,6 +37,14 @@ jobs:
       uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: ${{ env.TF_VERSION }}
+        terraform_wrapper: false
+
+    # Create SSH key from secret BEFORE terraform init
+    - name: Setup SSH Key for Terraform
+      run: |
+        mkdir -p ${{ github.workspace }}/infra/terraform/.ssh
+        echo "${{ secrets.SSH_PUBLIC_KEY }}" > ${{ github.workspace }}/infra/terraform/.ssh/devops_stage6.pub
+        chmod 644 ${{ github.workspace }}/infra/terraform/.ssh/devops_stage6.pub
 
     - name: Terraform Init
       working-directory: ./infra/terraform
@@ -46,19 +54,29 @@ jobs:
       id: plan
       working-directory: ./infra/terraform
       run: |
-        terraform plan -out=tfplan -no-color | tee plan_output.txt
-        echo "stdout<<EOF" >> $GITHUB_OUTPUT
-        cat plan_output.txt >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
+        set +e
+        terraform plan -detailed-exitcode -out=tfplan -no-color 2>&1 | tee plan_output.txt
+        PLAN_EXIT_CODE=${PIPESTATUS[0]}
+        echo "exitcode=$PLAN_EXIT_CODE" >> $GITHUB_OUTPUT
+
+        # Exit code 0 = no changes, 1 = error, 2 = changes detected
+        if [ $PLAN_EXIT_CODE -eq 1 ]; then
+          echo "❌ Terraform plan failed with errors"
+          exit 1
+        fi
+
+        exit 0
 
     - name: Check for Changes (Drift Detection)
       id: check_changes
       working-directory: ./infra/terraform
       run: |
-        if grep -q "No changes" plan_output.txt; then
+        PLAN_EXIT_CODE=${{ steps.plan.outputs.exitcode }}
+
+        if [ "$PLAN_EXIT_CODE" = "0" ]; then
           echo "has_changes=false" >> $GITHUB_OUTPUT
           echo "✅ No infrastructure drift detected"
-        else
+        elif [ "$PLAN_EXIT_CODE" = "2" ]; then
           echo "has_changes=true" >> $GITHUB_OUTPUT
           echo "⚠️ Infrastructure changes detected!"
         fi
@@ -78,6 +96,14 @@ jobs:
         name: plan-output
         path: infra/terraform/plan_output.txt
         retention-days: 5
+
+    - name: Upload SSH Key
+      if: steps.check_changes.outputs.has_changes == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ssh-key
+        path: infra/terraform/.ssh/devops_stage6.pub
+        retention-days: 1
 
   send-drift-notification:
     name: Send Drift Detection Email
@@ -128,7 +154,6 @@ jobs:
            Simply close the workflow run or let it timeout
 
         ⏱️ This approval request will expire in 1 hour.
-
         🔐 Security Note: Only authorized approvers can deploy these changes.
         EOF
 
@@ -165,6 +190,7 @@ jobs:
     environment:
       name: production
       url: https://padre.the.chickenkiller.com
+    timeout-minutes: 60
 
     steps:
     - name: Manual Approval Granted
@@ -193,6 +219,7 @@ jobs:
       uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: ${{ env.TF_VERSION }}
+        terraform_wrapper: false
 
     - name: Download Terraform Plan
       uses: actions/download-artifact@v4
@@ -200,11 +227,18 @@ jobs:
         name: tfplan
         path: infra/terraform/
 
-    - name: Setup SSH Key
+    - name: Download SSH Key
+      uses: actions/download-artifact@v4
+      with:
+        name: ssh-key
+        path: infra/terraform/.ssh/
+
+    - name: Setup SSH Key for Deployment
       run: |
         mkdir -p ~/.ssh
         echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
         chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan github.com >> ~/.ssh/known_hosts
 
     - name: Terraform Init
       working-directory: ./infra/terraform
@@ -212,7 +246,32 @@ jobs:
 
     - name: Terraform Apply
       working-directory: ./infra/terraform
-      run: terraform apply tfplan
+      run: terraform apply -auto-approve tfplan
+
+    - name: Get EC2 Instance Info
+      id: ec2_info
+      working-directory: ./infra/terraform
+      run: |
+        INSTANCE_IP=$(terraform output -raw instance_public_ip 2>/dev/null || echo "")
+        INSTANCE_EXISTS=$(terraform output -raw instance_id 2>/dev/null || echo "")
+
+        echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+        echo "instance_exists=$INSTANCE_EXISTS" >> $GITHUB_OUTPUT
+
+        if [ -n "$INSTANCE_EXISTS" ]; then
+          echo "✅ EC2 instance exists: $INSTANCE_EXISTS"
+          echo "📍 Public IP: $INSTANCE_IP"
+        else
+          echo "⚠️ No EC2 instance found"
+        fi
+
+    - name: Upload Instance Info
+      uses: actions/upload-artifact@v4
+      with:
+        name: ec2-info
+        path: |
+          infra/terraform/terraform.tfstate
+        retention-days: 1
 
     - name: Send Success Email
       if: success()
@@ -240,7 +299,7 @@ jobs:
 
           🌐 Application URL: https://padre.the.chickenkiller.com
 
-          ✨ All services are now running with the updated infrastructure.
+          ✨ Infrastructure is ready. Ansible configuration will run next if server exists.
 
     - name: Send Failure Email
       if: failure()
@@ -268,15 +327,236 @@ jobs:
           ⚠️ ACTION REQUIRED:
           Please check the workflow logs for error details and take corrective action.
 
-  no-changes-detected:
-    name: No Changes - Skip Deployment
+  ansible-configure:
+    name: Run Ansible Configuration
+    needs: [ terraform-apply ]
+    if: success()
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Download Instance Info
+      uses: actions/download-artifact@v4
+      with:
+        name: ec2-info
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+        terraform_wrapper: false
+
+    - name: Check if Server Exists
+      id: check_server
+      working-directory: ./infra/terraform
+      run: |
+        terraform init
+
+        INSTANCE_ID=$(terraform output -raw instance_id 2>/dev/null || echo "")
+        INSTANCE_IP=$(terraform output -raw instance_public_ip 2>/dev/null || echo "")
+
+        if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "" ]; then
+          echo "server_exists=true" >> $GITHUB_OUTPUT
+          echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+          echo "✅ Server exists: $INSTANCE_ID at $INSTANCE_IP"
+        else
+          echo "server_exists=false" >> $GITHUB_OUTPUT
+          echo "⚠️ No server found - skipping Ansible"
+        fi
+
+    - name: Setup SSH Key for Ansible
+      if: steps.check_server.outputs.server_exists == 'true'
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+
+        # Add the instance to known_hosts
+        ssh-keyscan -H ${{ steps.check_server.outputs.instance_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+    - name: Install Ansible
+      if: steps.check_server.outputs.server_exists == 'true'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ansible
+
+    - name: Wait for SSH to be Ready
+      if: steps.check_server.outputs.server_exists == 'true'
+      run: |
+        echo "⏳ Waiting for SSH to be ready on ${{ steps.check_server.outputs.instance_ip }}..."
+        for i in {1..30}; do
+          if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@${{ steps.check_server.outputs.instance_ip }} "echo 'SSH Ready'" 2>/dev/null; then
+            echo "✅ SSH is ready!"
+            exit 0
+          fi
+          echo "Attempt $i/30: SSH not ready yet, waiting 10s..."
+          sleep 10
+        done
+        echo "❌ SSH connection timeout"
+        exit 1
+
+    - name: Run Ansible Playbook
+      if: steps.check_server.outputs.server_exists == 'true'
+      working-directory: ./infra/ansible
+      run: |
+        echo "🚀 Running Ansible configuration..."
+        ansible-playbook -i inventory/hosts.ini playbook.yml -v
+
+    - name: Ansible Skipped (No Server)
+      if: steps.check_server.outputs.server_exists != 'true'
+      run: |
+        echo "⏭️ Ansible skipped - no server exists"
+        echo "This is normal if infrastructure was destroyed or not yet created"
+
+    - name: Send Ansible Success Email
+      if: steps.check_server.outputs.server_exists == 'true' && success()
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: smtp.gmail.com
+        server_port: 587
+        username: ${{ secrets.EMAIL_USERNAME }}
+        password: ${{ secrets.EMAIL_PASSWORD }}
+        subject: '✅ Ansible Configuration Successful - padre.the.chickenkiller.com'
+        to: ${{ secrets.NOTIFICATION_EMAIL }}
+        from: 'DevOps CI/CD <${{ secrets.EMAIL_USERNAME }}>'
+        body: |
+          ✅ ANSIBLE CONFIGURATION SUCCESSFUL
+
+          Server configuration has been applied successfully.
+
+          📋 Details:
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          Repository: ${{ github.repository }}
+          Branch: ${{ github.ref_name }}
+          Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          Instance IP: ${{ steps.check_server.outputs.instance_ip }}
+
+          🌐 Application URL: https://padre.the.chickenkiller.com
+
+          ✨ Infrastructure is fully configured and ready for application deployment.
+
+    - name: Send Ansible Failure Email
+      if: steps.check_server.outputs.server_exists == 'true' && failure()
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: smtp.gmail.com
+        server_port: 587
+        username: ${{ secrets.EMAIL_USERNAME }}
+        password: ${{ secrets.EMAIL_PASSWORD }}
+        subject: '❌ Ansible Configuration Failed - padre.the.chickenkiller.com'
+        to: ${{ secrets.NOTIFICATION_EMAIL }}
+        from: 'DevOps CI/CD <${{ secrets.EMAIL_USERNAME }}>'
+        body: |
+          ❌ ANSIBLE CONFIGURATION FAILED
+
+          Server configuration encountered an error.
+
+          📋 Details:
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          Repository: ${{ github.repository }}
+          Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          ⚠️ ACTION REQUIRED:
+          Please check the workflow logs for error details.
+
+  auto-apply-no-drift:
+    name: Auto-Apply (No Drift Detected)
     needs: terraform-plan
     if: needs.terraform-plan.outputs.has_changes == 'false'
     runs-on: ubuntu-latest
 
     steps:
-    - name: Log No Changes
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+        terraform_wrapper: false
+
+    - name: Setup SSH Key for Terraform
+      run: |
+        mkdir -p ${{ github.workspace }}/infra/terraform/.ssh
+        echo "${{ secrets.SSH_PUBLIC_KEY }}" > ${{ github.workspace }}/infra/terraform/.ssh/devops_stage6.pub
+        chmod 644 ${{ github.workspace }}/infra/terraform/.ssh/devops_stage6.pub
+
+    - name: Terraform Init
+      working-directory: ./infra/terraform
+      run: terraform init
+
+    - name: Terraform Apply (Auto)
+      working-directory: ./infra/terraform
       run: |
         echo "✅ No infrastructure drift detected"
         echo "Terraform state matches desired configuration"
-        echo "Skipping deployment"
+        terraform apply -auto-approve
+
+    - name: Check if Server Exists
+      id: check_server
+      working-directory: ./infra/terraform
+      run: |
+        INSTANCE_ID=$(terraform output -raw instance_id 2>/dev/null || echo "")
+        INSTANCE_IP=$(terraform output -raw instance_public_ip 2>/dev/null || echo "")
+
+        if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "" ]; then
+          echo "server_exists=true" >> $GITHUB_OUTPUT
+          echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+        else
+          echo "server_exists=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Setup SSH Key for Ansible
+      if: steps.check_server.outputs.server_exists == 'true'
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H ${{ steps.check_server.outputs.instance_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+    - name: Install Ansible
+      if: steps.check_server.outputs.server_exists == 'true'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ansible
+
+    - name: Run Ansible Playbook
+      if: steps.check_server.outputs.server_exists == 'true'
+      working-directory: ./infra/ansible
+      run: |
+        echo "🚀 Running Ansible configuration (no drift path)..."
+        ansible-playbook -i inventory/hosts.ini playbook.yml -v
+
+    - name: Send Success Email
+      if: success()
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: smtp.gmail.com
+        server_port: 587
+        username: ${{ secrets.EMAIL_USERNAME }}
+        password: ${{ secrets.EMAIL_PASSWORD }}
+        subject: '✅ Infrastructure Auto-Applied (No Drift) - padre.the.chickenkiller.com'
+        to: ${{ secrets.NOTIFICATION_EMAIL }}
+        from: 'DevOps CI/CD <${{ secrets.EMAIL_USERNAME }}>'
+        body: |
+          ✅ INFRASTRUCTURE AUTO-APPLIED
+
+          No drift detected. Infrastructure and configuration automatically applied.
+
+          📋 Details:
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          Repository: ${{ github.repository }}
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          🌐 Application URL: https://padre.the.chickenkiller.com
