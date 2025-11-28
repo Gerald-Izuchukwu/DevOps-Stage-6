@@ -267,7 +267,7 @@ jobs:
 
         echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
         echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
-        echo "instance_ip=$INSTANCE_IP" 
+        echo "instance_ip=$INSTANCE_IP" server_public_ip
         echo "instance_id=$INSTANCE_ID" 
 
         if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "" ]; then
@@ -410,7 +410,7 @@ jobs:
   #     id: ec2_info
   #     working-directory: ./infra/terraform
   #     run: |
-  #       INSTANCE_IP=$(terraform output -raw instance_public_ip 2>/dev/null || echo "")
+  #       INSTANCE_IP=$(terraform output -raw server_public_ip 2>/dev/null || echo "")
   #       INSTANCE_EXISTS=$(terraform output -raw instance_id 2>/dev/null || echo "")
 
   #       echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
@@ -512,8 +512,8 @@ jobs:
       run: |
         terraform init
 
-        INSTANCE_ID=$(terraform output -raw instance_id 2>/dev/null || echo "")
-        INSTANCE_IP=$(terraform output -raw instance_public_ip 2>/dev/null || echo "")
+        INSTANCE_ID=$(terraform output -raw server_id 2>/dev/null || echo "")
+        INSTANCE_IP=$(terraform output -raw server_public_ip 2>/dev/null || echo "")
 
         if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "" ]; then
           echo "server_exists=true" >> $GITHUB_OUTPUT
