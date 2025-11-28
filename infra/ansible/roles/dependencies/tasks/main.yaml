@@ -69,3 +69,16 @@
 - name: Display Docker Compose version
   debug:
     msg: "Docker Compose installed: {{ compose_version_output.stdout }}"
+
+- name: Reset SSH connection to activate docker group membership
+  meta: reset_connection
+
+- name: Verify ubuntu user can run docker commands
+  command: docker ps
+  become_user: ubuntu
+  register: docker_ps_output
+  changed_when: false
+
+- name: Display docker ps output
+  debug:
+    msg: "Docker ps output: {{ docker_ps_output.stdout }}"
