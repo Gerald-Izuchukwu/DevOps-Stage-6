@@ -4,8 +4,8 @@ instance_type = "t2.micro"
 
 # SSH Configuration
 key_name         = "devops-stage6-key"
-public_key_path  = "~/.ssh/id_rsa.pub"
-private_key_path = "~/.ssh/id_rsa"
+public_key_path  = "~/.ssh/devops_stage6.pub"
+private_key_path = "~/.ssh/devops_stage6"
 
 # Application Configuration
 domain      = "padre.the.chickenkiller.com"  # Update when you get domain

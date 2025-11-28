@@ -120,7 +120,7 @@ resource "null_resource" "run_ansible" {
       export ACME_EMAIL=${var.acme_email}
       export GITHUB_REPO=${var.github_repo}
       export JWT_SECRET=myfancysecret
-      ansible-playbook -i inventory/hosts.ini playbook.yaml
+      ansible-playbook -i inventory/hosts.ini playbook.yml
     EOT
   }
 }
