@@ -1,6 +1,6 @@
 ---
 - name: Deploy TODO Application
-  hosts: todo_servers
+  hosts: todo_server
   become: true
   gather_facts: true
 
