@@ -27,3 +27,5 @@ output "ansible_inventory_path" {
   description = "Path to generated Ansible inventory"
   value       = abspath("${path.module}/../ansible/inventory/hosts.ini")
 }
+
+#test for drift

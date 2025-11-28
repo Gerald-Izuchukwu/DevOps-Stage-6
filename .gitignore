@@ -42,6 +42,7 @@ keys/
 *.tfstate.*
 *.tfstate.backup
 tf.plan
+terraform-backend/
 
 # Terraform variable files (may contain secrets)
 terraform.tfvars
