@@ -17,6 +17,7 @@ services:
       - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
       - "--api.dashboard=true"
+
     ports:
       - "80:80"      
       - "443:443"    
@@ -144,3 +145,5 @@ networks:
 
 volumes:
   traefik-certs:
+
+
