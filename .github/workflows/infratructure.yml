@@ -186,141 +186,8 @@ jobs:
             body: '⚠️ **Terraform Drift Detected**\n\nInfrastructure changes detected. Email sent to approvers.\n\n[View Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})'
           })
 
-  terraform-apply:
-    name: Apply Infrastructure Changes
-    needs: [ terraform-plan, send-drift-notification ]
-    if: needs.terraform-plan.outputs.has_changes == 'true'
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://padre.the.chickenkiller.com
-    timeout-minutes: 60
-
-    steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
-
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: ${{ env.TF_VERSION }}
-        terraform_wrapper: false
-
-    - name: Download Terraform Plan
-      uses: actions/download-artifact@v4
-      with:
-        name: tfplan
-        path: infra/terraform/
-
-    - name: Download SSH Key
-      uses: actions/download-artifact@v4
-      with:
-        name: ssh-key
-        path: infra/terraform/.ssh/
-
-    - name: Setup SSH Key for Deployment
-      run: |
-        mkdir -p ~/.ssh
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-        chmod 600 ~/.ssh/id_rsa
-        ssh-keyscan github.com >> ~/.ssh/known_hosts
-
-    - name: Terraform Init
-      working-directory: ./infra/terraform
-      run: terraform init
-
-    - name: Terraform Apply
-      working-directory: ./infra/terraform
-      run: terraform apply -auto-approve tfplan
-
-    - name: Get EC2 Instance Info
-      id: ec2_info
-      working-directory: ./infra/terraform
-      run: |
-        INSTANCE_IP=$(terraform output -raw instance_public_ip 2>/dev/null || echo "")
-        INSTANCE_EXISTS=$(terraform output -raw instance_id 2>/dev/null || echo "")
-
-        echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
-        echo "instance_exists=$INSTANCE_EXISTS" >> $GITHUB_OUTPUT
-
-        if [ -n "$INSTANCE_EXISTS" ]; then
-          echo "✅ EC2 instance exists: $INSTANCE_EXISTS"
-          echo "📍 Public IP: $INSTANCE_IP"
-        else
-          echo "⚠️ No EC2 instance found"
-        fi
-
-    - name: Upload Instance Info
-      uses: actions/upload-artifact@v4
-      with:
-        name: ec2-info
-        path: |
-          infra/terraform/terraform.tfstate
-        retention-days: 1
-
-    - name: Send Success Email
-      if: success()
-      uses: dawidd6/action-send-mail@v3
-      with:
-        server_address: smtp.gmail.com
-        server_port: 587
-        username: ${{ secrets.EMAIL_USERNAME }}
-        password: ${{ secrets.EMAIL_PASSWORD }}
-        subject: '✅ Infrastructure Deployment Successful - padre.the.chickenkiller.com'
-        to: ${{ secrets.NOTIFICATION_EMAIL }}
-        from: 'DevOps CI/CD <${{ secrets.EMAIL_USERNAME }}>'
-        body: |
-          ✅ INFRASTRUCTURE DEPLOYMENT SUCCESSFUL
-
-          The infrastructure changes have been successfully applied.
-
-          📋 Details:
-          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          Repository: ${{ github.repository }}
-          Branch: ${{ github.ref_name }}
-          Commit: ${{ github.sha }}
-          Deployed by: ${{ github.actor }}
-          Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-          🌐 Application URL: https://padre.the.chickenkiller.com
-
-          ✨ Infrastructure is ready. Ansible configuration will run next if server exists.
-
-    - name: Send Failure Email
-      if: failure()
-      uses: dawidd6/action-send-mail@v3
-      with:
-        server_address: smtp.gmail.com
-        server_port: 587
-        username: ${{ secrets.EMAIL_USERNAME }}
-        password: ${{ secrets.EMAIL_PASSWORD }}
-        subject: '❌ Infrastructure Deployment Failed - padre.the.chickenkiller.com'
-        to: ${{ secrets.NOTIFICATION_EMAIL }}
-        from: 'DevOps CI/CD <${{ secrets.EMAIL_USERNAME }}>'
-        body: |
-          ❌ INFRASTRUCTURE DEPLOYMENT FAILED
-
-          The infrastructure deployment encountered an error.
-
-          📋 Details:
-          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          Repository: ${{ github.repository }}
-          Branch: ${{ github.ref_name }}
-          Commit: ${{ github.sha }}
-          Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-          ⚠️ ACTION REQUIRED:
-          Please check the workflow logs for error details and take corrective action.
-
-  # wait-for-approval:
-  #   name: Wait for Manual Approval
+  # terraform-apply:
+  #   name: Apply Infrastructure Changes
   #   needs: [ terraform-plan, send-drift-notification ]
   #   if: needs.terraform-plan.outputs.has_changes == 'true'
   #   runs-on: ubuntu-latest
@@ -328,18 +195,6 @@ jobs:
   #     name: production
   #     url: https://padre.the.chickenkiller.com
   #   timeout-minutes: 60
-
-  #   steps:
-  #   - name: Manual Approval Granted
-  #     run: |
-  #       echo "✅ Manual approval granted by reviewer"
-  #       echo "Proceeding with terraform apply..."
-
-  # terraform-apply:
-  #   name: Apply Infrastructure Changes
-  #   needs: [ terraform-plan, wait-for-approval ]
-  #   if: needs.terraform-plan.outputs.has_changes == 'true'
-  #   runs-on: ubuntu-latest
 
   #   steps:
   #   - name: Checkout Code
@@ -463,6 +318,151 @@ jobs:
 
   #         ⚠️ ACTION REQUIRED:
   #         Please check the workflow logs for error details and take corrective action.
+
+  wait-for-approval:
+    name: Wait for Manual Approval
+    needs: [ terraform-plan, send-drift-notification ]
+    if: needs.terraform-plan.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://padre.the.chickenkiller.com
+    timeout-minutes: 60
+
+    steps:
+    - name: Manual Approval Granted
+      run: |
+        echo "✅ Manual approval granted by reviewer"
+        echo "Proceeding with terraform apply..."
+
+  terraform-apply:
+    name: Apply Infrastructure Changes
+    needs: [ terraform-plan, wait-for-approval ]
+    if: needs.terraform-plan.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+        terraform_wrapper: false
+
+    - name: Download Terraform Plan
+      uses: actions/download-artifact@v4
+      with:
+        name: tfplan
+        path: infra/terraform/
+
+    - name: Download SSH Key
+      uses: actions/download-artifact@v4
+      with:
+        name: ssh-key
+        path: infra/terraform/.ssh/
+
+    - name: Setup SSH Key for Deployment
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+    - name: Terraform Init
+      working-directory: ./infra/terraform
+      run: terraform init
+
+    - name: Terraform Apply
+      working-directory: ./infra/terraform
+      run: terraform apply -auto-approve tfplan
+
+    - name: Get EC2 Instance Info
+      id: ec2_info
+      working-directory: ./infra/terraform
+      run: |
+        INSTANCE_IP=$(terraform output -raw instance_public_ip 2>/dev/null || echo "")
+        INSTANCE_EXISTS=$(terraform output -raw instance_id 2>/dev/null || echo "")
+
+        echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+        echo "instance_exists=$INSTANCE_EXISTS" >> $GITHUB_OUTPUT
+
+        if [ -n "$INSTANCE_EXISTS" ]; then
+          echo "✅ EC2 instance exists: $INSTANCE_EXISTS"
+          echo "📍 Public IP: $INSTANCE_IP"
+        else
+          echo "⚠️ No EC2 instance found"
+        fi
+
+    - name: Upload Instance Info
+      uses: actions/upload-artifact@v4
+      with:
+        name: ec2-info
+        path: |
+          infra/terraform/terraform.tfstate
+        retention-days: 1
+
+    - name: Send Success Email
+      if: success()
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: smtp.gmail.com
+        server_port: 587
+        username: ${{ secrets.EMAIL_USERNAME }}
+        password: ${{ secrets.EMAIL_PASSWORD }}
+        subject: '✅ Infrastructure Deployment Successful - padre.the.chickenkiller.com'
+        to: ${{ secrets.NOTIFICATION_EMAIL }}
+        from: 'DevOps CI/CD <${{ secrets.EMAIL_USERNAME }}>'
+        body: |
+          ✅ INFRASTRUCTURE DEPLOYMENT SUCCESSFUL
+
+          The infrastructure changes have been successfully applied.
+
+          📋 Details:
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          Repository: ${{ github.repository }}
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          Deployed by: ${{ github.actor }}
+          Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          🌐 Application URL: https://padre.the.chickenkiller.com
+
+          ✨ Infrastructure is ready. Ansible configuration will run next if server exists.
+
+    - name: Send Failure Email
+      if: failure()
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: smtp.gmail.com
+        server_port: 587
+        username: ${{ secrets.EMAIL_USERNAME }}
+        password: ${{ secrets.EMAIL_PASSWORD }}
+        subject: '❌ Infrastructure Deployment Failed - padre.the.chickenkiller.com'
+        to: ${{ secrets.NOTIFICATION_EMAIL }}
+        from: 'DevOps CI/CD <${{ secrets.EMAIL_USERNAME }}>'
+        body: |
+          ❌ INFRASTRUCTURE DEPLOYMENT FAILED
+
+          The infrastructure deployment encountered an error.
+
+          📋 Details:
+          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          Repository: ${{ github.repository }}
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          ⚠️ ACTION REQUIRED:
+          Please check the workflow logs for error details and take corrective action.
 
   ansible-configure:
     name: Run Ansible Configuration
