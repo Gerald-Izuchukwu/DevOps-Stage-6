@@ -96,7 +96,7 @@ resource "aws_eip" "todo_server" {
   domain   = "vpc"
 }
 
-# Ansible Inventory file
+# Ansible Inventory 
 resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/templates/inventory.tpl", {
     server_ip        = aws_eip.todo_server.public_ip
