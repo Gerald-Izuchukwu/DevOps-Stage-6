@@ -90,7 +90,7 @@ resource "aws_instance" "todo_server" {
 
 }
 
-# Elastic IP
+# Elastic IP .
 resource "aws_eip" "todo_server" {
   instance = aws_instance.todo_server.id
   domain   = "vpc"

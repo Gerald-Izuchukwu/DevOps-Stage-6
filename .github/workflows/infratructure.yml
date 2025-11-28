@@ -395,12 +395,29 @@ jobs:
         echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
         echo "instance_exists=$INSTANCE_EXISTS" >> $GITHUB_OUTPUT
 
-        if [ -n "$INSTANCE_EXISTS" ]; then
+        if [ -n "$INSTANCE_EXISTS" ] && [ "$INSTANCE_EXISTS" != "" ]; then
           echo "✅ EC2 instance exists: $INSTANCE_EXISTS"
           echo "📍 Public IP: $INSTANCE_IP"
         else
           echo "⚠️ No EC2 instance found"
         fi
+
+    # - name: Get EC2 Instance Info
+    #   id: ec2_info
+    #   working-directory: ./infra/terraform
+    #   run: |
+    #     INSTANCE_IP=$(terraform output -raw instance_public_ip 2>/dev/null || echo "")
+    #     INSTANCE_EXISTS=$(terraform output -raw instance_id 2>/dev/null || echo "")
+
+    #     echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+    #     echo "instance_exists=$INSTANCE_EXISTS" >> $GITHUB_OUTPUT
+
+    #     if [ -n "$INSTANCE_EXISTS" ]; then
+    #       echo "✅ EC2 instance exists: $INSTANCE_EXISTS"
+    #       echo "📍 Public IP: $INSTANCE_IP"
+    #     else
+    #       echo "⚠️ No EC2 instance found"
+    #     fi
 
     - name: Upload Instance Info
       uses: actions/upload-artifact@v4
@@ -519,18 +536,18 @@ jobs:
         echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/devops_stage6
         chmod 600 ~/.ssh/devops_stage6
 
-        - name: Install Ansible
-          if: steps.check_server.outputs.server_exists == 'true'
-          run: |
-            sudo apt-get update
-            sudo apt-get install -y ansible
+    - name: Install Ansible
+      if: steps.check_server.outputs.server_exists == 'true'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ansible
 
     - name: Wait for SSH to be Ready
       if: steps.check_server.outputs.server_exists == 'true'
       run: |
         echo "⏳ Waiting for SSH to be ready on ${{ steps.check_server.outputs.instance_ip }}..."
         for i in {1..30}; do
-          if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@${{ steps.check_server.outputs.instance_ip }} "echo 'SSH Ready'" 2>/dev/null; then
+          if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/devops_stage6 ubuntu@${{ steps.check_server.outputs.instance_ip }} "echo 'SSH Ready'" 2>/dev/null; then
             echo "✅ SSH is ready!"
             exit 0
           fi
@@ -539,6 +556,21 @@ jobs:
         done
         echo "❌ SSH connection timeout"
         exit 1
+
+    # - name: Wait for SSH to be Ready
+    #   if: steps.check_server.outputs.server_exists == 'true'
+    #   run: |
+    #     echo "⏳ Waiting for SSH to be ready on ${{ steps.check_server.outputs.instance_ip }}..."
+    #     for i in {1..30}; do
+    #       if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@${{ steps.check_server.outputs.instance_ip }} "echo 'SSH Ready'" 2>/dev/null; then
+    #         echo "✅ SSH is ready!"
+    #         exit 0
+    #       fi
+    #       echo "Attempt $i/30: SSH not ready yet, waiting 10s..."
+    #       sleep 10
+    #     done
+    #     echo "❌ SSH connection timeout"
+    #     exit 1
 
     - name: Run Ansible Playbook
       if: steps.check_server.outputs.server_exists == 'true'
