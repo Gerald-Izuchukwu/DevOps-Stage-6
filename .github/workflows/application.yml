@@ -1,0 +1,68 @@
+name: Application Deployment
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+    - 'frontend/**'
+    - 'auth-api/**'
+    - 'todos-api/**'
+    - 'users-api/**'
+    - 'log-processor/**'
+    - 'docker-compose.yml'
+    - '.env'
+  workflow_dispatch:
+
+
+jobs:
+  deploy-app:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup SSH
+      uses: webfactory/ssh-agent@v0.8.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: Add server to known hosts
+      run: |
+        mkdir -p ~/.ssh
+        ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+
+    - name: Deploy to server
+      run: |
+        ssh ubuntu@${{ secrets.SERVER_IP }} << 'EOF'
+          cd /opt/todo-app
+          git pull origin main
+          docker compose down
+          docker compose up -d --build
+          docker compose ps
+        EOF
+
+    - name: Health Check
+      run: |
+        sleep 30
+        curl -f https://${{ secrets.DOMAIN }} || exit 1
+
+    - name: Send Deployment Email
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: smtp.gmail.com
+        server_port: 587
+        username: ${{ secrets.EMAIL_USERNAME }}
+        password: ${{ secrets.EMAIL_PASSWORD }}
+        subject: '🚀 Application Deployed - TODO App'
+        to: ${{ secrets.ALERT_EMAIL }}
+        from: DevOps Bot <${{ secrets.EMAIL_USERNAME }}>
+        body: |
+          Application has been successfully deployed.
+          Repository: ${{ github.repository }}
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          Deployed by: ${{ github.actor }}
+          
+          Access at: https://${{ secrets.DOMAIN }}

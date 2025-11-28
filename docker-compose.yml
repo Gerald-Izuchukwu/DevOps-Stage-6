@@ -36,10 +36,7 @@ services:
       - app-network
 
   auth-api:
-    build:
-      context: ./auth-api
-      dockerfile: Dockerfile
-    image: auth-api:latest
+    image: gerald22/auth-api:latest
     container_name: auth-api
     restart: unless-stopped
     # ports:
@@ -62,10 +59,7 @@ services:
       - "traefik.http.services.auth-api.loadbalancer.server.port=8081"
 
   todos-api:
-    build:
-      context: ./todos-api
-      dockerfile: Dockerfile
-    image: todo-api:latest
+    image: gerald22/todo-api:latest
     container_name: todos-api
     restart: unless-stopped
     # ports:
@@ -90,10 +84,7 @@ services:
       - "traefik.http.services.todos-api.loadbalancer.server.port=8082"
 
   users-api:
-    build:
-      context: ./users-api
-      dockerfile: Dockerfile
-    image: user-api:latest
+    image: gerald22/user-api:latest
     container_name: users-api
     restart: unless-stopped
     # ports:
@@ -119,7 +110,7 @@ services:
 
 
   log-processor:
-    image: log-message-processor:latest
+    image: gerald22/log-message-processor:latest
     container_name: log-processor
     environment:
       - REDIS_HOST=redis-queue
@@ -131,10 +122,7 @@ services:
       - app-network
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    image: frontend:latest
+    image: gerald22/frontend:latest
     container_name: frontend
     # ports:
     #   - "8080:80"
