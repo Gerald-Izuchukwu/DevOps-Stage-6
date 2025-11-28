@@ -105,7 +105,6 @@ resource "local_file" "ansible_inventory" {
   })
   filename = "${path.module}/../ansible/inventory/hosts.ini"
   depends_on = [aws_eip.todo_server]
-  #resource
 }
 
 # resource "null_resource" "run_ansible" {

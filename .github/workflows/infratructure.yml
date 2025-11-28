@@ -262,8 +262,8 @@ jobs:
       working-directory: ./infra/terraform
       run: |
         # Get outputs directly after apply (state is fresh)
-        INSTANCE_IP=$(terraform output -raw instance_public_ip 2>/dev/null || echo "")
-        INSTANCE_ID=$(terraform output -raw instance_id 2>/dev/null || echo "")
+        INSTANCE_IP=$(terraform output -raw server_public_ip 2>/dev/null || echo "")
+        INSTANCE_ID=$(terraform output -raw server_id 2>/dev/null || echo "")
 
         echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
         echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
