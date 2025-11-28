@@ -503,21 +503,27 @@ jobs:
           echo "⚠️ No server found - skipping Ansible"
         fi
 
+    # - name: Setup SSH Key for Ansible
+    #   if: steps.check_server.outputs.server_exists == 'true'
+    #   run: |
+    #     mkdir -p ~/.ssh
+    #     echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+    #     chmod 600 ~/.ssh/id_rsa
+
+    #     # Add the instance to known_hosts
+    #     ssh-keyscan -H ${{ steps.check_server.outputs.instance_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
     - name: Setup SSH Key for Ansible
-      if: steps.check_server.outputs.server_exists == 'true'
       run: |
         mkdir -p ~/.ssh
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-        chmod 600 ~/.ssh/id_rsa
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/devops_stage6
+        chmod 600 ~/.ssh/devops_stage6
 
-        # Add the instance to known_hosts
-        ssh-keyscan -H ${{ steps.check_server.outputs.instance_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
-
-    - name: Install Ansible
-      if: steps.check_server.outputs.server_exists == 'true'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ansible
+        - name: Install Ansible
+          if: steps.check_server.outputs.server_exists == 'true'
+          run: |
+            sudo apt-get update
+            sudo apt-get install -y ansible
 
     - name: Wait for SSH to be Ready
       if: steps.check_server.outputs.server_exists == 'true'
