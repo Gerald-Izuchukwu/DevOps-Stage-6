@@ -39,6 +39,16 @@
     groups: docker
     append: yes
 
+- name: Install system packages required for Traefik and Git
+  apt:
+    name:
+    - git
+    - curl
+    - ca-certificates
+    - gnupg
+    state: present
+    update_cache: yes
+
 - name: Install Docker Compose (standalone binary)
   get_url:
     url: https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-linux-x86_64
