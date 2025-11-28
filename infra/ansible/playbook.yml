@@ -10,6 +10,7 @@
     domain: "{{ lookup('env', 'DOMAIN') | default('localhost', true) }}"
     acme_email: "{{ lookup('env', 'ACME_EMAIL') | default('admin@example.com', true) }}"
     jwt_secret: "{{ lookup('env', 'JWT_SECRET') | default('myfancysecret', true) }}"
+    app_repo: "https://github.com/Gerald-Izuchukwu/DevOps-Stage-6.git"
 
   pre_tasks:
   - name: Update apt cache
