@@ -85,6 +85,7 @@ resource "aws_instance" "todo_server" {
 
   tags = {
     Name = "todo-app-server"
+    description = "EC2 instance for TODO application"
   }
 
 }
