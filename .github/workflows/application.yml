@@ -149,6 +149,10 @@ jobs:
           echo "📂 Navigating to application directory..."
           cd /opt/todo-app
           
+          echo "🧹 Discarding local changes..."
+          git reset --hard HEAD
+          git clean -fd
+          
           echo "📥 Pulling latest changes..."
           git pull origin main
           
