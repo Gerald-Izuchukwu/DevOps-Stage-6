@@ -56,13 +56,13 @@
   ignore_errors: true
   when: git_pull.changed or env_file.changed
 
-- name: Build Docker images
-  command: docker compose build
+- name: Pull latest images from Docker Hub
+  command: docker compose pull
   args:
     chdir: "{{ app_dir }}"
   become_user: ubuntu
-  when: git_pull.changed or env_file.changed
-  register: docker_build
+  register: docker_pull
+  timeout: 600
 
 - name: Start Docker containers
   command: docker compose up -d
