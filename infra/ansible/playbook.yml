@@ -7,9 +7,9 @@
   vars:
     app_dir: /opt/todo-app
     compose_file: docker-compose.yml
-    domain: "{{ lookup('env', 'DOMAIN') | default('localhost', true) }}"
-    acme_email: "{{ lookup('env', 'ACME_EMAIL') | default('admin@example.com', true) }}"
-    jwt_secret: "{{ lookup('env', 'JWT_SECRET') | default('myfancysecret', true) }}"
+    domain: "padre.the.chickenkiller.com"
+    acme_email: "padre.xunil@gmail.com"
+    jwt_secret: "myfancysecret"
     app_repo: "https://github.com/Gerald-Izuchukwu/DevOps-Stage-6.git"
 
   pre_tasks:
@@ -32,6 +32,5 @@
       msg:
       - "✅ Deployment completed successfully!"
       - "Server IP: {{ ansible_default_ipv4.address }}"
-      - "Application URL: https://{{ domain }}"
+      - "Application URL: https://padre.the.chickenkiller.com"
       - "SSH: ssh -i ~/.ssh/id_rsa ubuntu@{{ ansible_default_ipv4.address }}"
-      #echo hi, this change is to simulate drift change in infrastructure
