@@ -17,7 +17,7 @@ provider "aws" {
   region = var.aws_region
 }
 
-# Get latest Ubuntu AMI
+# Get latest Ubuntu AMI -test
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"]
