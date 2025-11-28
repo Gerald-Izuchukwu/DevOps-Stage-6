@@ -355,7 +355,6 @@ jobs:
 
           ⚠️ ACTION REQUIRED:
           Please check the workflow logs for error details and take corrective action.
-
   # terraform-apply:
   #   name: Apply Infrastructure Changes
   #   needs: [ terraform-plan, wait-for-approval ]
@@ -485,112 +484,84 @@ jobs:
   #         ⚠️ ACTION REQUIRED:
   #         Please check the workflow logs for error details and take corrective action.
 
+
   ansible-configure:
     name: Run Ansible Configuration
     needs: [ terraform-apply ]
-    if: success()
+    if: success() && needs.terraform-apply.outputs.server_exists == 'true'
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Download Instance Info
-      uses: actions/download-artifact@v4
-      with:
-        name: ec2-info
-
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: ${{ env.TF_VERSION }}
-        terraform_wrapper: false
-
-    - name: Check if Server Exists
-      id: check_server
-      working-directory: ./infra/terraform
+    - name: Display Instance Information
       run: |
-        terraform init
-
-        INSTANCE_ID=$(terraform output -raw server_id 2>/dev/null || echo "")
-        INSTANCE_IP=$(terraform output -raw server_public_ip 2>/dev/null || echo "")
-
-        if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "" ]; then
-          echo "server_exists=true" >> $GITHUB_OUTPUT
-          echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
-          echo "✅ Server exists: $INSTANCE_ID at $INSTANCE_IP"
-        else
-          echo "server_exists=false" >> $GITHUB_OUTPUT
-          echo "⚠️ No server found - skipping Ansible"
-        fi
-
-    # - name: Setup SSH Key for Ansible
-    #   if: steps.check_server.outputs.server_exists == 'true'
-    #   run: |
-    #     mkdir -p ~/.ssh
-    #     echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-    #     chmod 600 ~/.ssh/id_rsa
-
-    #     # Add the instance to known_hosts
-    #     ssh-keyscan -H ${{ steps.check_server.outputs.instance_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
+        echo "🔍 Instance Information:"
+        echo "Instance ID: ${{ needs.terraform-apply.outputs.instance_id }}"
+        echo "Instance IP: ${{ needs.terraform-apply.outputs.instance_ip }}"
+        echo "Server Exists: ${{ needs.terraform-apply.outputs.server_exists }}"
 
     - name: Setup SSH Key for Ansible
       run: |
         mkdir -p ~/.ssh
         echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/devops_stage6
         chmod 600 ~/.ssh/devops_stage6
+        chmod 700 ~/.ssh
 
     - name: Install Ansible
-      if: steps.check_server.outputs.server_exists == 'true'
       run: |
         sudo apt-get update
         sudo apt-get install -y ansible
 
-    - name: Wait for SSH to be Ready
-      if: steps.check_server.outputs.server_exists == 'true'
+    - name: Update Ansible Inventory
       run: |
-        echo "⏳ Waiting for SSH to be ready on ${{ steps.check_server.outputs.instance_ip }}..."
+        INSTANCE_IP="${{ needs.terraform-apply.outputs.instance_ip }}"
+        echo "📝 Updating Ansible inventory with IP: $INSTANCE_IP"
+
+        # Create inventory directory if it doesn't exist
+        mkdir -p infra/ansible/inventory
+
+        # Create/update hosts.ini
+        cat > infra/ansible/inventory/hosts.ini <<EOF
+        [web]
+        todo_server ansible_host=$INSTANCE_IP ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/devops_stage6 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+        EOF
+
+        echo "✅ Inventory updated:"
+        cat infra/ansible/inventory/hosts.ini
+
+    - name: Wait for SSH to be Ready
+      run: |
+        INSTANCE_IP="${{ needs.terraform-apply.outputs.instance_ip }}"
+        echo "⏳ Waiting for SSH to be ready on $INSTANCE_IP..."
+
         for i in {1..30}; do
-          if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/devops_stage6 ubuntu@${{ steps.check_server.outputs.instance_ip }} "echo 'SSH Ready'" 2>/dev/null; then
+          if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/devops_stage6 ubuntu@$INSTANCE_IP "echo 'SSH Ready'" 2>/dev/null; then
             echo "✅ SSH is ready!"
             exit 0
           fi
           echo "Attempt $i/30: SSH not ready yet, waiting 10s..."
           sleep 10
         done
-        echo "❌ SSH connection timeout"
+
+        echo "❌ SSH connection timeout after 5 minutes"
         exit 1
 
-    # - name: Wait for SSH to be Ready
-    #   if: steps.check_server.outputs.server_exists == 'true'
-    #   run: |
-    #     echo "⏳ Waiting for SSH to be ready on ${{ steps.check_server.outputs.instance_ip }}..."
-    #     for i in {1..30}; do
-    #       if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@${{ steps.check_server.outputs.instance_ip }} "echo 'SSH Ready'" 2>/dev/null; then
-    #         echo "✅ SSH is ready!"
-    #         exit 0
-    #       fi
-    #       echo "Attempt $i/30: SSH not ready yet, waiting 10s..."
-    #       sleep 10
-    #     done
-    #     echo "❌ SSH connection timeout"
-    #     exit 1
+    - name: Test Ansible Connection
+      working-directory: ./infra/ansible
+      run: |
+        echo "🔍 Testing Ansible connection..."
+        ansible all -i inventory/hosts.ini -m ping -v
 
     - name: Run Ansible Playbook
-      if: steps.check_server.outputs.server_exists == 'true'
       working-directory: ./infra/ansible
       run: |
         echo "🚀 Running Ansible configuration..."
         ansible-playbook -i inventory/hosts.ini playbook.yml -v
 
-    - name: Ansible Skipped (No Server)
-      if: steps.check_server.outputs.server_exists != 'true'
-      run: |
-        echo "⏭️ Ansible skipped - no server exists"
-        echo "This is normal if infrastructure was destroyed or not yet created"
-
     - name: Send Ansible Success Email
-      if: steps.check_server.outputs.server_exists == 'true' && success()
+      if: success()
       uses: dawidd6/action-send-mail@v3
       with:
         server_address: smtp.gmail.com
@@ -610,14 +581,15 @@ jobs:
           Repository: ${{ github.repository }}
           Branch: ${{ github.ref_name }}
           Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          Instance IP: ${{ steps.check_server.outputs.instance_ip }}
+          Instance ID: ${{ needs.terraform-apply.outputs.instance_id }}
+          Instance IP: ${{ needs.terraform-apply.outputs.instance_ip }}
 
           🌐 Application URL: https://padre.the.chickenkiller.com
 
           ✨ Infrastructure is fully configured and ready for application deployment.
 
     - name: Send Ansible Failure Email
-      if: steps.check_server.outputs.server_exists == 'true' && failure()
+      if: failure()
       uses: dawidd6/action-send-mail@v3
       with:
         server_address: smtp.gmail.com
@@ -636,80 +608,68 @@ jobs:
           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           Repository: ${{ github.repository }}
           Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          Instance IP: ${{ needs.terraform-apply.outputs.instance_ip }}
 
           ⚠️ ACTION REQUIRED:
           Please check the workflow logs for error details.
 
-  auto-apply-no-drift:
-    name: Auto-Apply (No Drift Detected)
-    needs: terraform-plan
-    if: needs.terraform-plan.outputs.has_changes == 'false'
+  ansible-configure-no-drift:
+    name: Run Ansible Configuration (No Drift)
+    needs: [ auto-apply-no-drift ]
+    if: success() && needs.auto-apply-no-drift.outputs.server_exists == 'true'
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: ${{ env.TF_VERSION }}
-        terraform_wrapper: false
-
-    - name: Setup SSH Key for Terraform
+    - name: Display Instance Information
       run: |
-        mkdir -p ${{ github.workspace }}/infra/terraform/.ssh
-        echo "${{ secrets.SSH_PUBLIC_KEY }}" > ${{ github.workspace }}/infra/terraform/.ssh/devops_stage6.pub
-        chmod 644 ${{ github.workspace }}/infra/terraform/.ssh/devops_stage6.pub
-
-    - name: Terraform Init
-      working-directory: ./infra/terraform
-      run: terraform init
-
-    - name: Terraform Apply (Auto)
-      working-directory: ./infra/terraform
-      run: |
-        echo "✅ No infrastructure drift detected"
-        echo "Terraform state matches desired configuration"
-        terraform apply -auto-approve
-
-    - name: Check if Server Exists
-      id: check_server
-      working-directory: ./infra/terraform
-      run: |
-        INSTANCE_ID=$(terraform output -raw instance_id 2>/dev/null || echo "")
-        INSTANCE_IP=$(terraform output -raw instance_public_ip 2>/dev/null || echo "")
-
-        if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "" ]; then
-          echo "server_exists=true" >> $GITHUB_OUTPUT
-          echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
-        else
-          echo "server_exists=false" >> $GITHUB_OUTPUT
-        fi
+        echo "🔍 Instance Information:"
+        echo "Instance ID: ${{ needs.auto-apply-no-drift.outputs.instance_id }}"
+        echo "Instance IP: ${{ needs.auto-apply-no-drift.outputs.instance_ip }}"
 
     - name: Setup SSH Key for Ansible
-      if: steps.check_server.outputs.server_exists == 'true'
       run: |
         mkdir -p ~/.ssh
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-        chmod 600 ~/.ssh/id_rsa
-        ssh-keyscan -H ${{ steps.check_server.outputs.instance_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/devops_stage6
+        chmod 600 ~/.ssh/devops_stage6
+        chmod 700 ~/.ssh
 
     - name: Install Ansible
-      if: steps.check_server.outputs.server_exists == 'true'
       run: |
         sudo apt-get update
         sudo apt-get install -y ansible
 
+    - name: Update Ansible Inventory
+      run: |
+        INSTANCE_IP="${{ needs.auto-apply-no-drift.outputs.instance_ip }}"
+        echo "📝 Updating Ansible inventory with IP: $INSTANCE_IP"
+        mkdir -p infra/ansible/inventory
+        cat > infra/ansible/inventory/hosts.ini <<EOF
+        [web]
+        todo_server ansible_host=$INSTANCE_IP ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/devops_stage6 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+        EOF
+        echo "✅ Inventory updated"
+
+    - name: Wait for SSH to be Ready
+      run: |
+        INSTANCE_IP="${{ needs.auto-apply-no-drift.outputs.instance_ip }}"
+        echo "⏳ Waiting for SSH to be ready on $INSTANCE_IP..."
+
+        for i in {1..30}; do
+          if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/devops_stage6 ubuntu@$INSTANCE_IP "echo 'SSH Ready'" 2>/dev/null; then
+            echo "✅ SSH is ready!"
+            exit 0
+          fi
+          echo "Attempt $i/30: SSH not ready yet, waiting 10s..."
+          sleep 10
+        done
+
+        echo "❌ SSH connection timeout"
+        exit 1
+
     - name: Run Ansible Playbook
-      if: steps.check_server.outputs.server_exists == 'true'
       working-directory: ./infra/ansible
       run: |
         echo "🚀 Running Ansible configuration (no drift path)..."
@@ -723,19 +683,263 @@ jobs:
         server_port: 587
         username: ${{ secrets.EMAIL_USERNAME }}
         password: ${{ secrets.EMAIL_PASSWORD }}
-        subject: '✅ Infrastructure Auto-Applied (No Drift) - padre.the.chickenkiller.com'
+        subject: '✅ Infrastructure & Ansible Complete (No Drift) - padre.the.chickenkiller.com'
         to: ${{ secrets.NOTIFICATION_EMAIL }}
         from: 'DevOps CI/CD <${{ secrets.EMAIL_USERNAME }}>'
         body: |
-          ✅ INFRASTRUCTURE AUTO-APPLIED
+          ✅ COMPLETE DEPLOYMENT SUCCESSFUL
 
-          No drift detected. Infrastructure and configuration automatically applied.
+          No drift detected. Infrastructure and Ansible configuration complete.
 
           📋 Details:
           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           Repository: ${{ github.repository }}
           Branch: ${{ github.ref_name }}
-          Commit: ${{ github.sha }}
           Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
           🌐 Application URL: https://padre.the.chickenkiller.com
+
+# ansible-configure:
+#   name: Run Ansible Configuration
+#   needs: [ terraform-apply ]
+#   if: success()
+#   runs-on: ubuntu-latest
+
+#   steps:
+#   - name: Checkout Code
+#     uses: actions/checkout@v4
+
+#   - name: Download Instance Info
+#     uses: actions/download-artifact@v4
+#     with:
+#       name: ec2-info
+
+#   - name: Setup Terraform
+#     uses: hashicorp/setup-terraform@v3
+#     with:
+#       terraform_version: ${{ env.TF_VERSION }}
+#       terraform_wrapper: false
+
+#   - name: Check if Server Exists
+#     id: check_server
+#     working-directory: ./infra/terraform
+#     run: |
+#       terraform init
+
+#       INSTANCE_ID=$(terraform output -raw server_id 2>/dev/null || echo "")
+#       INSTANCE_IP=$(terraform output -raw server_public_ip 2>/dev/null || echo "")
+
+#       if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "" ]; then
+#         echo "server_exists=true" >> $GITHUB_OUTPUT
+#         echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+#         echo "✅ Server exists: $INSTANCE_ID at $INSTANCE_IP"
+#       else
+#         echo "server_exists=false" >> $GITHUB_OUTPUT
+#         echo "⚠️ No server found - skipping Ansible"
+#       fi
+
+#   - name: Setup SSH Key for Ansible
+#     run: |
+#       mkdir -p ~/.ssh
+#       echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/devops_stage6
+#       chmod 600 ~/.ssh/devops_stage6
+
+#   - name: Install Ansible
+#     if: steps.check_server.outputs.server_exists == 'true'
+#     run: |
+#       sudo apt-get update
+#       sudo apt-get install -y ansible
+
+#   - name: Wait for SSH to be Ready
+#     if: steps.check_server.outputs.server_exists == 'true'
+#     run: |
+#       echo "⏳ Waiting for SSH to be ready on ${{ steps.check_server.outputs.instance_ip }}..."
+#       for i in {1..30}; do
+#         if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/devops_stage6 ubuntu@${{ steps.check_server.outputs.instance_ip }} "echo 'SSH Ready'" 2>/dev/null; then
+#           echo "✅ SSH is ready!"
+#           exit 0
+#         fi
+#         echo "Attempt $i/30: SSH not ready yet, waiting 10s..."
+#         sleep 10
+#       done
+#       echo "❌ SSH connection timeout"
+#       exit 1
+
+#   # - name: Wait for SSH to be Ready
+#   #   if: steps.check_server.outputs.server_exists == 'true'
+#   #   run: |
+#   #     echo "⏳ Waiting for SSH to be ready on ${{ steps.check_server.outputs.instance_ip }}..."
+#   #     for i in {1..30}; do
+#   #       if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@${{ steps.check_server.outputs.instance_ip }} "echo 'SSH Ready'" 2>/dev/null; then
+#   #         echo "✅ SSH is ready!"
+#   #         exit 0
+#   #       fi
+#   #       echo "Attempt $i/30: SSH not ready yet, waiting 10s..."
+#   #       sleep 10
+#   #     done
+#   #     echo "❌ SSH connection timeout"
+#   #     exit 1
+
+#   - name: Run Ansible Playbook
+#     if: steps.check_server.outputs.server_exists == 'true'
+#     working-directory: ./infra/ansible
+#     run: |
+#       echo "🚀 Running Ansible configuration..."
+#       ansible-playbook -i inventory/hosts.ini playbook.yml -v
+
+#   - name: Ansible Skipped (No Server)
+#     if: steps.check_server.outputs.server_exists != 'true'
+#     run: |
+#       echo "⏭️ Ansible skipped - no server exists"
+#       echo "This is normal if infrastructure was destroyed or not yet created"
+
+#   - name: Send Ansible Success Email
+#     if: steps.check_server.outputs.server_exists == 'true' && success()
+#     uses: dawidd6/action-send-mail@v3
+#     with:
+#       server_address: smtp.gmail.com
+#       server_port: 587
+#       username: ${{ secrets.EMAIL_USERNAME }}
+#       password: ${{ secrets.EMAIL_PASSWORD }}
+#       subject: '✅ Ansible Configuration Successful - padre.the.chickenkiller.com'
+#       to: ${{ secrets.NOTIFICATION_EMAIL }}
+#       from: 'DevOps CI/CD <${{ secrets.EMAIL_USERNAME }}>'
+#       body: |
+#         ✅ ANSIBLE CONFIGURATION SUCCESSFUL
+
+#         Server configuration has been applied successfully.
+
+#         📋 Details:
+#         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#         Repository: ${{ github.repository }}
+#         Branch: ${{ github.ref_name }}
+#         Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+#         Instance IP: ${{ steps.check_server.outputs.instance_ip }}
+
+#         🌐 Application URL: https://padre.the.chickenkiller.com
+
+#         ✨ Infrastructure is fully configured and ready for application deployment.
+
+#   - name: Send Ansible Failure Email
+#     if: steps.check_server.outputs.server_exists == 'true' && failure()
+#     uses: dawidd6/action-send-mail@v3
+#     with:
+#       server_address: smtp.gmail.com
+#       server_port: 587
+#       username: ${{ secrets.EMAIL_USERNAME }}
+#       password: ${{ secrets.EMAIL_PASSWORD }}
+#       subject: '❌ Ansible Configuration Failed - padre.the.chickenkiller.com'
+#       to: ${{ secrets.NOTIFICATION_EMAIL }}
+#       from: 'DevOps CI/CD <${{ secrets.EMAIL_USERNAME }}>'
+#       body: |
+#         ❌ ANSIBLE CONFIGURATION FAILED
+
+#         Server configuration encountered an error.
+
+#         📋 Details:
+#         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#         Repository: ${{ github.repository }}
+#         Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+#         ⚠️ ACTION REQUIRED:
+#         Please check the workflow logs for error details.
+
+# auto-apply-no-drift:
+#   name: Auto-Apply (No Drift Detected)
+#   needs: terraform-plan
+#   if: needs.terraform-plan.outputs.has_changes == 'false'
+#   runs-on: ubuntu-latest
+
+#   steps:
+#   - name: Checkout Code
+#     uses: actions/checkout@v4
+
+#   - name: Configure AWS Credentials
+#     uses: aws-actions/configure-aws-credentials@v4
+#     with:
+#       aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+#       aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+#       aws-region: ${{ env.AWS_REGION }}
+
+#   - name: Setup Terraform
+#     uses: hashicorp/setup-terraform@v3
+#     with:
+#       terraform_version: ${{ env.TF_VERSION }}
+#       terraform_wrapper: false
+
+#   - name: Setup SSH Key for Terraform
+#     run: |
+#       mkdir -p ${{ github.workspace }}/infra/terraform/.ssh
+#       echo "${{ secrets.SSH_PUBLIC_KEY }}" > ${{ github.workspace }}/infra/terraform/.ssh/devops_stage6.pub
+#       chmod 644 ${{ github.workspace }}/infra/terraform/.ssh/devops_stage6.pub
+
+#   - name: Terraform Init
+#     working-directory: ./infra/terraform
+#     run: terraform init
+
+#   - name: Terraform Apply (Auto)
+#     working-directory: ./infra/terraform
+#     run: |
+#       echo "✅ No infrastructure drift detected"
+#       echo "Terraform state matches desired configuration"
+#       terraform apply -auto-approve
+
+#   - name: Check if Server Exists
+#     id: check_server
+#     working-directory: ./infra/terraform
+#     run: |
+#       INSTANCE_ID=$(terraform output -raw instance_id 2>/dev/null || echo "")
+#       INSTANCE_IP=$(terraform output -raw instance_public_ip 2>/dev/null || echo "")
+
+#       if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "" ]; then
+#         echo "server_exists=true" >> $GITHUB_OUTPUT
+#         echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+#       else
+#         echo "server_exists=false" >> $GITHUB_OUTPUT
+#       fi
+
+#   - name: Setup SSH Key for Ansible
+#     if: steps.check_server.outputs.server_exists == 'true'
+#     run: |
+#       mkdir -p ~/.ssh
+#       echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+#       chmod 600 ~/.ssh/id_rsa
+#       ssh-keyscan -H ${{ steps.check_server.outputs.instance_ip }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+#   - name: Install Ansible
+#     if: steps.check_server.outputs.server_exists == 'true'
+#     run: |
+#       sudo apt-get update
+#       sudo apt-get install -y ansible
+
+#   - name: Run Ansible Playbook
+#     if: steps.check_server.outputs.server_exists == 'true'
+#     working-directory: ./infra/ansible
+#     run: |
+#       echo "🚀 Running Ansible configuration (no drift path)..."
+#       ansible-playbook -i inventory/hosts.ini playbook.yml -v
+
+#   - name: Send Success Email
+#     if: success()
+#     uses: dawidd6/action-send-mail@v3
+#     with:
+#       server_address: smtp.gmail.com
+#       server_port: 587
+#       username: ${{ secrets.EMAIL_USERNAME }}
+#       password: ${{ secrets.EMAIL_PASSWORD }}
+#       subject: '✅ Infrastructure Auto-Applied (No Drift) - padre.the.chickenkiller.com'
+#       to: ${{ secrets.NOTIFICATION_EMAIL }}
+#       from: 'DevOps CI/CD <${{ secrets.EMAIL_USERNAME }}>'
+#       body: |
+#         ✅ INFRASTRUCTURE AUTO-APPLIED
+
+#         No drift detected. Infrastructure and configuration automatically applied.
+
+#         📋 Details:
+#         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#         Repository: ${{ github.repository }}
+#         Branch: ${{ github.ref_name }}
+#         Commit: ${{ github.sha }}
+#         Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+#         🌐 Application URL: https://padre.the.chickenkiller.com
