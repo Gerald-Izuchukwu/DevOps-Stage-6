@@ -106,24 +106,24 @@ resource "local_file" "ansible_inventory" {
   depends_on = [aws_eip.todo_server]
 }
 
-resource "null_resource" "run_ansible" {
-  depends_on = [
-    local_file.ansible_inventory
-  ]
+# resource "null_resource" "run_ansible" {
+#   depends_on = [
+#     local_file.ansible_inventory
+#   ]
 
-  provisioner "local-exec" {
-    command = <<-EOT
-      sleep 60
-      cd ${path.module}/../ansible
-      export ANSIBLE_HOST_KEY_CHECKING=False
-      export DOMAIN=${var.domain}
-      export ACME_EMAIL=${var.acme_email}
-      export GITHUB_REPO=${var.github_repo}
-      export JWT_SECRET=myfancysecret
-      ansible-playbook -i inventory/hosts.ini playbook.yml
-    EOT
-  }
-}
+#   provisioner "local-exec" {
+#     command = <<-EOT
+#       sleep 60
+#       cd ${path.module}/../ansible
+#       export ANSIBLE_HOST_KEY_CHECKING=False
+#       export DOMAIN=${var.domain}
+#       export ACME_EMAIL=${var.acme_email}
+#       export GITHUB_REPO=${var.github_repo}
+#       export JWT_SECRET=myfancysecret
+#       ansible-playbook -i inventory/hosts.ini playbook.yml
+#     EOT
+#   }
+# }
 
 
 #
