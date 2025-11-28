@@ -33,3 +33,4 @@
       - "Server IP: {{ ansible_default_ipv4.address }}"
       - "Application URL: https://{{ domain }}"
       - "SSH: ssh -i ~/.ssh/id_rsa ubuntu@{{ ansible_default_ipv4.address }}"
+      #echo hi, this change is to simulate drift change in infrastructure
