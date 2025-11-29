@@ -54,7 +54,7 @@ services:
       - app-network
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.auth-api.rule=Host(`${DOMAIN}`) && PathPrefix(`/api/auth`)"
+      - "traefik.http.routers.auth-api.rule=Host(`padre.the.chickenkiller.com`) && PathPrefix(`/api/auth`)"
       - "traefik.http.routers.auth-api.entrypoints=websecure"
       - "traefik.http.routers.auth-api.tls.certresolver=letsencrypt"
       - "traefik.http.services.auth-api.loadbalancer.server.port=8081"
@@ -79,7 +79,7 @@ services:
 
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.todos-api.rule=Host(`${DOMAIN}`) && PathPrefix(`/api/todos`)"
+      - "traefik.http.routers.todos-api.rule=Host(`padre.the.chickenkiller.com`) && PathPrefix(`/api/todos`)"
       - "traefik.http.routers.todos-api.entrypoints=websecure"
       - "traefik.http.routers.todos-api.tls.certresolver=letsencrypt"
       - "traefik.http.services.todos-api.loadbalancer.server.port=8082"
@@ -104,7 +104,7 @@ services:
         
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.users-api.rule=Host(`${DOMAIN}`) && PathPrefix(`/api/users`)"
+      - "traefik.http.routers.users-api.rule=Host(`padre.the.chickenkiller.com`) && PathPrefix(`/api/users`)"
       - "traefik.http.routers.users-api.entrypoints=websecure"
       - "traefik.http.routers.users-api.tls.certresolver=letsencrypt"
       - "traefik.http.services.users-api.loadbalancer.server.port=8083"
@@ -129,8 +129,8 @@ services:
     #   - "8080:80"
     restart: unless-stopped
     environment:
-      - AUTH_API_ADDRESS=https://${DOMAIN}/api/auth
-      - TODOS_API_ADDRESS=https://${DOMAIN}/api/todos
+      - AUTH_API_ADDRESS=https://padre.the.chickenkiller.com/api/auth
+      - TODOS_API_ADDRESS=https://padre.the.chickenkiller.com/api/todos
     depends_on:
       - auth-api
       - todos-api
@@ -141,7 +141,7 @@ services:
       - "traefik.enable=true"
       
       # ✅ For REMOTE (HTTPS):
-      - "traefik.http.routers.frontend.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.frontend.rule=Host(`padre.the.chickenkiller.com`)"
       - "traefik.http.routers.frontend.entrypoints=websecure"
       - "traefik.http.routers.frontend.tls.certresolver=letsencrypt"
       
