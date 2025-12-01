@@ -27,7 +27,7 @@ data "aws_ami" "ubuntu" {
   }
 }
 
-# Security Group
+
 resource "aws_security_group" "todo_app" {
   name        = "todo-app-sg"
   description = "Security group for TODO application"
